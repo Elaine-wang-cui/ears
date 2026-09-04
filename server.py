@@ -57,6 +57,9 @@ VOICE_DIR = os.path.realpath(os.path.expanduser(
     os.environ.get("CHU_VOICE_DIR", "~/.chu-voice")))
 VOICE_EXTS = ("m4a", "wav", "mp3", "webm", "aac", "ogg", "flac")
 VOICE_MAX_BYTES = 15 * 1024 * 1024
+# 带时间戳的历史录音保留天数（仅清理 voice-*.ext 存档，latest.* 永远保留）。
+# 设为 0 表示永久保留。隐私考虑默认 7 天自动清理。
+CHU_VOICE_KEEP_DAYS = max(0, int(os.environ.get("CHU_VOICE_KEEP_DAYS", "7") or "7"))
 # mime -> 扩展名（解析快捷指令上传的 multipart 时用）
 _MIME_EXT = {
     "audio/mp4": "m4a", "audio/x-m4a": "m4a", "audio/aac": "aac",
@@ -65,6 +68,10 @@ _MIME_EXT = {
 }
 
 os.makedirs(VOICE_DIR, exist_ok=True)
+try:  # 语音目录仅当前用户可读（多账户机器 / 备份同步场景）
+    os.chmod(VOICE_DIR, 0o700)
+except OSError:
+    pass
 
 # 可选：从 ~/.chu-voice/env 读 KEY=VALUE（方便 launchd 常驻时配 GEMINI_API_KEY）
 _envfile = os.path.join(VOICE_DIR, "env")
@@ -90,6 +97,10 @@ if not TOKEN:
         TOKEN = secrets.token_urlsafe(12)
         with open(token_path, "w", encoding="utf-8") as f:
             f.write(TOKEN)
+        try:
+            os.chmod(token_path, 0o600)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------- 分析引擎
@@ -387,7 +398,11 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
-        print("[chu-voice] %s %s" % (self.address_string(), fmt % args),
+        # 日志脱敏：绝不把含 token 的路径写进终端/日志文件
+        msg = fmt % args
+        if TOKEN:
+            msg = msg.replace(TOKEN, "***")
+        print("[chu-voice] %s %s" % (self.address_string(), msg),
               flush=True)
 
     def _send_json(self, status, payload):
@@ -413,10 +428,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         route = self._route()
         if route is None:
-            # 带上收到的原始路径，方便排查是 token 错还是被代理截胡
+            # 带上收到的原始路径（token 打码），方便排查是 token 错还是被代理截胡
             self._send_json(404, {"error": "not found",
                                   "chu_hint": "chu-voice-mcp",
-                                  "path": urllib.parse.urlparse(self.path).path})
+                                  "path": self._safe_path()})
             return
         try:
             length = int(self.headers.get("Content-Length", 0))
@@ -437,6 +452,10 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) != 2 or parts[0] != TOKEN:
             return None
         return parts[1]
+
+    def _safe_path(self):
+        """日志/错误信息用的路径：token 打码"""
+        return urllib.parse.urlparse(self.path).path.replace(TOKEN, "***")
 
     def _handle_voice(self, raw):
         try:
@@ -468,9 +487,28 @@ class Handler(BaseHTTPRequestHandler):
             with open(os.path.join(VOICE_DIR, "latest." + ext), "wb") as f:
                 f.write(audio)
             stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-            with open(os.path.join(VOICE_DIR,
-                                   "voice-%s.%s" % (stamp, ext)), "wb") as f:
+            archive = os.path.join(VOICE_DIR, "voice-%s.%s" % (stamp, ext))
+            with open(archive, "wb") as f:
                 f.write(audio)
+            for saved in (os.path.join(VOICE_DIR, "latest." + ext), archive):
+                try:  # 录音属敏感数据，仅当前用户可读
+                    os.chmod(saved, 0o600)
+                except OSError:
+                    pass
+
+            # 保留期清理：只删带时间戳的历史存档，latest.* 永远保留
+            if CHU_VOICE_KEEP_DAYS > 0:
+                cutoff = time.time() - CHU_VOICE_KEEP_DAYS * 86400
+                for f in os.listdir(VOICE_DIR):
+                    p = os.path.join(VOICE_DIR, f)
+                    if f.startswith("voice-") and os.path.isfile(p) \
+                            and os.path.getmtime(p) < cutoff:
+                        try:
+                            os.remove(p)
+                            print("[chu-voice] 清理过期存档 %s" % f,
+                                  flush=True)
+                        except OSError:
+                            pass
 
             print("[chu-voice] 收到语音 %.1f KB (%s)"
                   % (len(audio) / 1024.0, ext), flush=True)
@@ -509,19 +547,22 @@ def main():
         engine = "OpenRouter ✓ (%s)" % OPENROUTER_VOICE_MODEL
     else:
         engine = "未配置（先 export GEMINI_API_KEY）"
+    masked = TOKEN[:4] + "…（完整见 token.txt）"
     print("""
 ==============================================
  Chu 语音 MCP 已启动（只服务语音，无其他能力）
  本地地址:  http://127.0.0.1:%d
  私密 token: %s
  语音引擎:  %s
- 语音目录:  %s
+ 语音目录:  %s（存档保留 %d 天，CHU_VOICE_KEEP_DAYS=0 可永久）
+ 录音/日志含敏感信息，目录与文件已限当前用户可读
 
  下一步：跑 ./start.sh，会同时开 cloudflared 隧道并打印
         完整的「连接器地址」和「快捷指令上传地址」
+        （地址里含 token，请当作密码保管）
  按 Ctrl+C 停止
 ==============================================
-""" % (PORT, TOKEN, engine, VOICE_DIR))
+""" % (PORT, masked, engine, VOICE_DIR, CHU_VOICE_KEEP_DAYS))
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     try:
         server.serve_forever()

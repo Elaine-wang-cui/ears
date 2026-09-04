@@ -9,8 +9,10 @@ if ! command -v cloudflared >/dev/null 2>&1; then
 fi
 
 # 先起本地服务，token 会自动生成并持久化
-# CHU_VOICE_LAN=1：同时监听局域网，iPhone 在家里 Wi-Fi 可直连上传
-CHU_VOICE_LAN=1 python3 server.py &
+# 默认只监听 127.0.0.1（iPhone 走隧道域名上传）。
+# 想让 iPhone 在同一 Wi-Fi 下用局域网地址直连（更快，但 http 明文）：
+#   export CHU_VOICE_LAN=1
+python3 server.py &
 SERVER_PID=$!
 trap 'kill $SERVER_PID $TUNNEL_PID 2>/dev/null' EXIT INT TERM
 
@@ -45,13 +47,15 @@ echo " ① Claude 连接器地址（claude.ai → 设置 → 连接器 →"
 echo "    添加自定义连接器，粘贴这个）："
 echo "    $URL/$TOKEN/mcp"
 echo ""
-echo " ② iPhone 快捷指令上传地址（二选一）："
-if [ -n "$LAN_IP" ]; then
-echo "    在家（推荐，局域网直连最快最稳）："
+echo " ② iPhone 快捷指令上传地址："
+echo "    $URL/$TOKEN/voice"
+if [ -n "$LAN_IP" ] && [ "${CHU_VOICE_LAN:-0}" = "1" ]; then
+echo "    （局域网直连模式已开，同 Wi-Fi 也可用："
 echo "      http://$LAN_IP:${CHU_VOICE_PORT:-8770}/$TOKEN/voice"
+echo "      注意 http 明文传输，仅在可信 Wi-Fi 使用）"
 fi
-echo "    在外（iPhone 挂了代理时可用）："
-echo "      $URL/$TOKEN/voice"
+echo ""
+echo "    ⚠️ 以上地址含 token，请当作密码保管"
 echo ""
 echo " ③ 测试：Safari 打开 $URL/$TOKEN/health 应显示 ok"
 echo ""

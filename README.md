@@ -111,6 +111,7 @@ CHU_VOICE_LAN=1 python3 server.py
 | `CHU_VOICE_LAN` | 关 | 设 `1` 时监听 `0.0.0.0`（局域网直传） |
 | `CHU_VOICE_TOKEN` | 自动生成 | 私密路径 token，持久化在数据目录 |
 | `CHU_VOICE_DIR` | `~/.chu-voice` | 录音与 token 存放目录 |
+| `CHU_VOICE_KEEP_DAYS` | `7` | 历史录音存档保留天数，`0` 永久保留 |
 
 也可以在 `~/.chu-voice/env` 里写 `KEY=VALUE`（配合 launchd/systemd 常驻很方便）。
 
@@ -120,14 +121,31 @@ macOS LaunchAgent 示例（`~/Library/LaunchAgents/com.you.voicemcp.plist`）：
 `ProgramArguments` 指向 `python3 server.py`，`KeepAlive` 设 `true`，
 `RunAtLoad` 设 `true`。或者简单点用 `nohup ./start.sh &`。
 
-## 安全模型
+## 隐私与安全
 
+**数据流向（先说清楚）**：
+- 原始语音会以 base64 发给你配置的分析引擎（Google Gemini 或 OpenRouter），
+  转写和语气分析结果经 MCP 返回给 Claude——除此之外音频不发任何第三方
+- 录音只存在你机器的 `CHU_VOICE_DIR`（默认 `~/.chu-voice`）。带时间戳的
+  历史存档**默认 7 天自动清理**（`CHU_VOICE_KEEP_DAYS` 可调，`0` 永久保留），
+  `latest.*` 永远保留
+- 数据目录、录音、token 文件在代码里强制 `700`/`600` 权限（仅当前用户可读，
+  防多账户机器和备份同步误伤）
+
+**访问控制**：
 - 服务**只做两件事**：收录音、分析录音。没有文件读写、没有终端、没有截屏
-- 所有路由都藏在 `/<TOKEN>/` 后面；token 泄露就删掉数据目录里的
+- 所有路由藏在 `/<TOKEN>/` 后面；token 泄露就删掉数据目录里的
   `token.txt` 重启，自动换新
-- 默认只监听 `127.0.0.1`；开 `CHU_VOICE_LAN=1` 后局域网可达，注意
-  同一 Wi-Fi 下的人需要 token 才能传文件
-- 隧道把服务暴露到公网时，暴露的仍然只是这两个 token 保护的语音端点
+- 默认只监听 `127.0.0.1`；`CHU_VOICE_LAN=1` 开启局域网直传后是
+  **http 明文（无传输加密）**，只在可信 Wi-Fi 下用；同一 Wi-Fi 的人
+  没有 token 也传不了文件
+- 隧道暴露到公网的，也只是这两个 token 保护的语音端点
+
+**操作卫生**：
+- 启动横幅只显示 token 前 4 位；`start.sh` 打印的完整连接器地址
+  **含 token，当作密码保管**，别截图、别贴群
+- 服务日志已对 token 脱敏（日志里是 `***`），但会记录客户端 IP，
+  日志文件不要随便外发
 
 ## 已知坑（都是实踩过的）
 
