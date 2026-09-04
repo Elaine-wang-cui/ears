@@ -94,6 +94,34 @@ CHU_VOICE_LAN=1 python3 server.py
 
 （可选）再加一个「打开 URL」填 `claude://`，录完自动跳进 Claude App。
 
+### 安卓（Android）怎么录
+
+服务端不挑设备，任何能发 HTTP POST 的方式都行。三选一：
+
+**① Tasker（付费，体验最像 iOS 快捷指令）**
+
+1. 新建任务 → 动作 **录制音频**（Record Audio，可在参数里限时长）
+2. 动作 **HTTP 请求**：方法 `POST`，地址填**上传地址**（局域网地址记得
+   加 `?ext=m4a`），请求体选 **文件** → 勾选上一步的录音
+3. 动作 **通知**：`已发送 ✅`
+4. 把任务做成桌面图标，一点就录
+
+**② HTTP Request Shortcuts（免费开源）**
+
+建一个 POST 快捷方式指向**上传地址**，请求体选文件类型。它不能录音，
+先用系统录音机录好，运行时在文件选择器里挑刚录的文件——多两步，零成本。
+
+**③ Termux（极客流）**
+
+仓库里带了现成脚本 [`termux-upload.sh`](termux-upload.sh)：
+F-Droid 装 Termux + Termux:API → `pkg install curl termux-api` →
+`export CHU_VOICE_SERVER=上传地址` → 以后一条命令边录边传，
+配合 Termux Widget 可以做成桌面图标。
+
+安卓官方 Claude App 登录同一账号即可使用连接器（连接器是账号级设置，
+在 claude.ai 网页添加一次即可）。安卓各机型/各 App 的上传行为可能有
+差异，遇到报错把信息发 issue。
+
 ### ⑤ 开聊
 
 点快捷指令 → 说话 → 点停止 → 打开官方 Claude App 说：
