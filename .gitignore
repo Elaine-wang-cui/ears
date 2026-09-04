@@ -1,0 +1,11 @@
+# 隐私保护：这些永远不要提交
+voice/
+*.m4a
+*.mp3
+*.wav
+token.txt
+env
+__pycache__/
+*.pyc
+*.log
+.DS_Store
